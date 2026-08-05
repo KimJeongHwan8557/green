@@ -263,6 +263,9 @@
         <option value="jeju">제주권</option>
         <option value="other">기타·미분류</option>
       </select>
+      <select id="departmentFilter" class="control" aria-label="부서">
+        <option value="">부서</option>
+      </select>
       <select id="modelFilter" class="control" aria-label="AI 모델">
         <option value="">AI 모델</option>
         <option value="gpt">GPT</option>
@@ -323,6 +326,7 @@
       dateFilter: document.getElementById("dateFilter"),
       sortSelect: document.getElementById("sortSelect"),
       areaFilter: document.getElementById("areaFilter"),
+      departmentFilter: document.getElementById("departmentFilter"),
       refreshButton: document.getElementById("refreshButton"),
       metricTotal: document.getElementById("metricTotal"),
       metricToday: document.getElementById("metricToday"),
@@ -505,11 +509,35 @@
       }).join("");
     }
 
+    function departmentNames(value) {
+      return String(value || "")
+        .split(/[·,\/|;]+/)
+        .map((name) => name.trim())
+        .filter(Boolean);
+    }
+
+    function populateDepartmentFilter() {
+      const current = elements.departmentFilter.value;
+      const names = [...new Set(
+        state.items.flatMap((item) => departmentNames(item.department))
+      )].sort((a, b) => a.localeCompare(b, "ko"));
+
+      elements.departmentFilter.innerHTML = [
+        '<option value="">부서</option>',
+        ...names.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+      ].join("");
+
+      if (names.includes(current)) {
+        elements.departmentFilter.value = current;
+      }
+    }
+
     function applyFilters() {
       const query = elements.searchInput.value.trim().toLowerCase();
       const selectedModel = elements.modelFilter.value;
       const selectedDate = elements.dateFilter.value;
       const selectedArea = elements.areaFilter.value;
+      const selectedDepartment = elements.departmentFilter.value;
       const sort = elements.sortSelect.value;
       const now = new Date();
 
@@ -521,6 +549,7 @@
         if (query && !haystack.includes(query)) return false;
         if (selectedModel && modelType(item) !== selectedModel) return false;
         if (selectedArea && areaGroup(item.relatedArea) !== selectedArea) return false;
+        if (selectedDepartment && !departmentNames(item.department).includes(selectedDepartment)) return false;
 
         if (selectedDate) {
           const date = parseDate(item.publishedAt || item.collectedAt);
@@ -591,6 +620,7 @@
 
         showAuthenticated();
         state.items = Array.isArray(data.items) ? data.items : [];
+        populateDepartmentFilter();
         elements.updated.textContent = data.updatedAt
           ? `마지막 데이터 확인 ${data.updatedAt}`
           : `데이터 ${state.items.length}건 확인`;
@@ -645,7 +675,7 @@
     });
 
     elements.refreshButton.addEventListener("click", loadNews);
-    [elements.searchInput, elements.modelFilter, elements.dateFilter, elements.sortSelect, elements.areaFilter]
+    [elements.searchInput, elements.areaFilter, elements.departmentFilter, elements.modelFilter, elements.dateFilter, elements.sortSelect]
       .forEach((element) => element.addEventListener(element.tagName === "INPUT" ? "input" : "change", applyFilters));
 
     loadNews();
