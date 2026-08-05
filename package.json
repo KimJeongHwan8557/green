@@ -1,0 +1,8 @@
+{
+  "name": "jeonnam-gwangju-policy-briefing",
+  "version": "1.1.0",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  }
+}
