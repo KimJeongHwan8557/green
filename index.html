@@ -79,7 +79,7 @@
 
     .toolbar {
       display: grid;
-      grid-template-columns: minmax(260px, 1fr) 190px 155px 190px auto;
+      grid-template-columns: minmax(260px, 1fr) 170px 190px 155px 190px;
       gap: 10px;
       margin-bottom: 38px;
     }
@@ -252,26 +252,8 @@
 
     <section class="toolbar" aria-label="뉴스 필터">
       <input id="searchInput" class="control search" type="search" placeholder="정책, 연계방안, 권역, 부서, 쟁점 검색">
-      <select id="modelFilter" class="control">
-        <option value="">전체 AI 모델</option>
-        <option value="gpt">GPT</option>
-        <option value="gemini">Gemini</option>
-        <option value="other">기타·미확인</option>
-      </select>
-      <select id="dateFilter" class="control">
-        <option value="">전체 날짜</option>
-        <option value="today">오늘</option>
-        <option value="7days">최근 7일</option>
-        <option value="30days">최근 30일</option>
-      </select>
-      <select id="sortSelect" class="control">
-        <option value="published-desc">발행일 최신순</option>
-        <option value="published-asc">발행일 오래된순</option>
-        <option value="importance-desc">중요도 높은순</option>
-        <option value="collected-desc">수집일 최신순</option>
-      </select>
-      <select id="areaFilter" class="control">
-        <option value="">전체 지역</option>
+      <select id="areaFilter" class="control" aria-label="지역">
+        <option value="">지역</option>
         <option value="national">전국</option>
         <option value="gwangju-jeonnam">광주·전남</option>
         <option value="capital">수도권</option>
@@ -280,6 +262,24 @@
         <option value="yeongnam">영남권</option>
         <option value="jeju">제주권</option>
         <option value="other">기타·미분류</option>
+      </select>
+      <select id="modelFilter" class="control" aria-label="AI 모델">
+        <option value="">AI 모델</option>
+        <option value="gpt">GPT</option>
+        <option value="gemini">Gemini</option>
+        <option value="other">기타·미확인</option>
+      </select>
+      <select id="dateFilter" class="control" aria-label="날짜">
+        <option value="">날짜</option>
+        <option value="today">오늘</option>
+        <option value="7days">최근 7일</option>
+        <option value="30days">최근 30일</option>
+      </select>
+      <select id="sortSelect" class="control" aria-label="정렬">
+        <option value="published-desc">정렬</option>
+        <option value="published-asc">발행일 오래된순</option>
+        <option value="importance-desc">중요도 높은순</option>
+        <option value="collected-desc">수집일 최신순</option>
       </select>
     </section>
 
