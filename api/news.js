@@ -38,9 +38,9 @@ function normalizeItem(raw) {
     category: text(item.category || item["카테고리"] || "기타"),
     relatedArea: text(item.relatedArea || item.region || item["관련지역"]),
     department: text(item.department || item["소관부서"]),
-    summary: text(item.summary || item["요약"]),
-    issue: text(item.issue || item["의정쟁점"]),
-    questions: text(item.questions || item["활용질의"]),
+    summary: text(item.summary || item["뉴스 요약"] || item["요약"]),
+    issue: text(item.issue || item["쟁점"] || item["의정쟁점"]),
+    questions: text(item.questions || item["활용 가능 주요 키워드"] || item["활용질의"]),
     importance: Math.max(0, Math.min(100, number(item.importance || item["중요도"]))),
     analysisModel: text(item.analysisModel || item.model || item["분석모델"]),
     analysisBasis: text(item.analysisBasis || item.basis || item["분석기준"])
