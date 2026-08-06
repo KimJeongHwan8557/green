@@ -435,6 +435,10 @@
       pageSize: 20
     };
 
+    const AUTH_CHECK_URL = "/api/auth";
+    const SESSION_CACHE_TTL_MS = 60 * 1000;
+
+
     const elements = {
       authOverlay: document.getElementById("authOverlay"),
       authLoading: document.getElementById("authLoading"),
@@ -598,6 +602,55 @@
         return { data: null, raw };
       }
     }
+
+    function clearSessionCaches() {
+      try {
+        sessionStorage.removeItem("newsCache");
+        sessionStorage.removeItem("leaderSpeechCache");
+      } catch (_error) {}
+    }
+
+    function readSessionCache(key) {
+      try {
+        const cached = JSON.parse(sessionStorage.getItem(key) || "null");
+        if (!cached || !Array.isArray(cached.items)) return null;
+        if (Date.now() - Number(cached.savedAt || 0) >= SESSION_CACHE_TTL_MS) {
+          sessionStorage.removeItem(key);
+          return null;
+        }
+        return cached;
+      } catch (_error) {
+        try { sessionStorage.removeItem(key); } catch (__error) {}
+        return null;
+      }
+    }
+
+    function writeSessionCache(key, data, items) {
+      try {
+        sessionStorage.setItem(key, JSON.stringify({
+          savedAt: Date.now(),
+          updatedAt: data?.updatedAt || "",
+          items
+        }));
+      } catch (_error) {}
+    }
+
+    async function checkAuthenticatedSession() {
+      try {
+        const response = await fetch(AUTH_CHECK_URL, {
+          method: "GET",
+          credentials: "same-origin",
+          cache: "no-store",
+          headers: { Accept: "application/json" }
+        });
+        if (response.status === 401) return false;
+        if (response.ok) return true;
+        return null;
+      } catch (_error) {
+        return null;
+      }
+    }
+
 
     function showLogin(message = "") {
       elements.authLoading.hidden = true;
@@ -779,13 +832,42 @@
       renderCards();
     }
 
-    async function loadSpeeches() {
+    async function loadSpeeches(forceRefresh = false) {
       elements.refreshButton.disabled = true;
+
+      if (!forceRefresh) {
+        const cached = readSessionCache("leaderSpeechCache");
+        if (cached) {
+          const authenticated = await checkAuthenticatedSession();
+          if (authenticated === false) {
+            clearSessionCaches();
+            state.items = [];
+            state.filtered = [];
+            showLogin();
+            elements.refreshButton.disabled = false;
+            return;
+          }
+          if (authenticated === true) {
+            showAuthenticated();
+            state.items = cached.items;
+            populateFilters();
+            populateDateFilter();
+            elements.updated.textContent = cached.updatedAt
+              ? `마지막 데이터 확인 ${cached.updatedAt}`
+              : `데이터 ${state.items.length}건 확인`;
+            applyFilters();
+            elements.refreshButton.disabled = false;
+            return;
+          }
+        }
+      }
+
       elements.updated.textContent = "데이터 확인 중";
       showStatus("데이터를 불러오는 중입니다.");
 
       try {
-        const response = await fetch("/api/leader-speeches", {
+        const endpoint = forceRefresh ? "/api/leader-speeches?refresh=1" : "/api/leader-speeches";
+        const response = await fetch(endpoint, {
           method: "GET",
           credentials: "same-origin",
           cache: "no-store",
@@ -794,6 +876,9 @@
         const { data, raw } = await readJson(response);
 
         if (response.status === 401) {
+          clearSessionCaches();
+          state.items = [];
+          state.filtered = [];
           showLogin();
           return;
         }
@@ -816,6 +901,7 @@
 
         showAuthenticated();
         state.items = Array.isArray(data.items) ? data.items : [];
+        writeSessionCache("leaderSpeechCache", data, state.items);
         populateFilters();
         populateDateFilter();
         elements.updated.textContent = data.updatedAt
@@ -848,9 +934,10 @@
           return;
         }
         elements.password.value = "";
+        clearSessionCaches();
         elements.authLoading.hidden = false;
         elements.authLogin.hidden = true;
-        await loadSpeeches();
+        await loadSpeeches(true);
       } catch (error) {
         elements.loginError.textContent = error instanceof Error ? error.message : "로그인 연결 오류";
       } finally {
@@ -862,6 +949,7 @@
       try {
         await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
       } finally {
+        clearSessionCaches();
         state.items = [];
         state.filtered = [];
         showLogin();
@@ -878,7 +966,7 @@
       document.querySelector(".result-head")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
 
-    elements.refreshButton.addEventListener("click", loadSpeeches);
+    elements.refreshButton.addEventListener("click", () => loadSpeeches(true));
     [elements.searchInput, elements.speakerFilter, elements.departmentFilter, elements.modelFilter, elements.dateFilter, elements.sortSelect]
       .forEach((element) => element.addEventListener(element.tagName === "INPUT" ? "input" : "change", applyFilters));
 

@@ -1,168 +1,126 @@
-const { isAuthorized } = require("./_auth");
+"use strict";
 
-const REQUEST_TIMEOUT_MS = 20000;
+const { requireAuth, setPrivateNoStore } = require("./_lib/auth");
 
-function text(value) {
-  return value == null ? "" : String(value);
-}
+const URL_ENV_NAMES = [
+  "NEWS_APPS_SCRIPT_URL",
+  "NEWS_APPS_SCRIPT_WEB_APP_URL",
+  "APPS_SCRIPT_WEB_APP_URL",
+  "APPS_SCRIPT_URL",
+  "GOOGLE_APPS_SCRIPT_URL"
+];
 
-function number(value) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
+const TOKEN_ENV_NAMES = [
+  "NEWS_DASHBOARD_API_TOKEN",
+  "NEWS_API_TOKEN",
+  "DASHBOARD_API_TOKEN",
+  "APPS_SCRIPT_API_TOKEN"
+];
 
-function isHttpUrl(value) {
-  try {
-    const url = new URL(String(value || ""));
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch (_error) {
-    return false;
+const MEMORY_CACHE_MS = 60 * 1000;
+let memoryCache = { expiresAt: 0, payload: null };
+
+function firstConfiguredEnv(names) {
+  for (const name of names) {
+    const value = String(process.env[name] || "").trim();
+    if (value) return { name, value };
   }
+  return { name: "", value: "" };
 }
 
-function normalizeItem(raw) {
-  const item = raw && typeof raw === "object" ? raw : {};
-
-  return {
-    collectedAt: text(item.collectedAt || item.collected_at || item["수집일"]),
-    slot: text(item.slot || item.collectionSlot || item["수집구간"]),
-    publishedAt: text(item.publishedAt || item.published_at || item["발행일"]),
-    title: text(item.title || item["제목"]),
-    link: isHttpUrl(item.link || item.originalLink || item["원문링크"])
-      ? text(item.link || item.originalLink || item["원문링크"])
-      : "",
-    googleNewsLink: isHttpUrl(item.googleNewsLink || item["Google뉴스링크"])
-      ? text(item.googleNewsLink || item["Google뉴스링크"])
-      : "",
-    source: text(item.source || item.publisher || item["언론사"]),
-    category: text(item.category || item["카테고리"] || "기타"),
-    relatedArea: text(item.relatedArea || item.region || item["관련지역"]),
-    department: text(item.department || item["소관부서"]),
-    summary: text(item.summary || item["뉴스 요약"] || item["요약"]),
-    issue: text(item.issue || item["쟁점"] || item["의정쟁점"]),
-    questions: text(item.questions || item["활용 가능 주요 키워드"] || item["활용질의"]),
-    importance: Math.max(0, Math.min(100, number(item.importance || item["중요도"]))),
-    analysisModel: text(item.analysisModel || item.model || item["분석모델"]),
-    analysisBasis: text(item.analysisBasis || item.basis || item["분석기준"])
-  };
+function forceRefreshRequested(req) {
+  const value = req?.query?.refresh;
+  return value === "1" || value === "true" || value === "yes";
 }
 
-function normalizePayload(data) {
-  const rawItems = Array.isArray(data)
-    ? data
-    : Array.isArray(data && data.items)
-      ? data.items
-      : [];
-
-  return {
-    updatedAt: text(data && data.updatedAt),
-    items: rawItems.map(normalizeItem).filter((item) => item.title)
-  };
-}
-
-function safePreview(value) {
-  return String(value || "")
-    .replace(/\s+/g, " ")
-    .slice(0, 180);
+async function fetchJsonWithTimeout(url, timeoutMs = 20000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      redirect: "follow",
+      signal: controller.signal
+    });
+    const raw = await response.text();
+    let data = null;
+    try {
+      data = JSON.parse(raw);
+    } catch (_error) {
+      return { response, raw, data: null };
+    }
+    return { response, raw, data };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 module.exports = async function handler(req, res) {
-  res.setHeader("Cache-Control", "private, no-store, max-age=0");
+  setPrivateNoStore(res);
 
   if (req.method !== "GET") {
     res.setHeader("Allow", "GET");
-    return res.status(405).json({ error: "GET 요청만 허용됩니다." });
+    return res.status(405).json({ error: "method_not_allowed" });
   }
 
-  if (!isAuthorized(req)) {
-    return res.status(401).json({ error: "unauthorized" });
-  }
+  const session = requireAuth(req, res);
+  if (!session) return;
 
-  const scriptUrl = String(process.env.APPS_SCRIPT_URL || "").trim();
-  const token = String(process.env.APPS_SCRIPT_TOKEN || "").trim();
-
+  const urlConfig = firstConfiguredEnv(URL_ENV_NAMES);
+  const tokenConfig = firstConfiguredEnv(TOKEN_ENV_NAMES);
   const missing = [];
-  if (!scriptUrl) missing.push("APPS_SCRIPT_URL");
-  if (!token) missing.push("APPS_SCRIPT_TOKEN");
+  if (!urlConfig.value) missing.push(`뉴스 Apps Script URL (${URL_ENV_NAMES.join(" 또는 ")})`);
+  if (!tokenConfig.value) missing.push(`뉴스 API 토큰 (${TOKEN_ENV_NAMES.join(" 또는 ")})`);
 
   if (missing.length) {
     return res.status(500).json({
-      error: "Vercel 환경변수가 설정되지 않았습니다.",
+      error: "뉴스 API 환경변수가 없습니다.",
       missing
     });
   }
 
-  let upstreamUrl;
-  try {
-    upstreamUrl = new URL(scriptUrl);
-    upstreamUrl.searchParams.set("token", token);
-  } catch (_error) {
-    return res.status(500).json({
-      error: "APPS_SCRIPT_URL 형식이 올바르지 않습니다.",
-      hint: "Apps Script 웹 앱의 /exec 주소를 입력하세요."
-    });
+  const forceRefresh = forceRefreshRequested(req);
+  if (!forceRefresh && memoryCache.payload && memoryCache.expiresAt > Date.now()) {
+    res.setHeader("X-Data-Cache", "memory-hit");
+    return res.status(200).json(memoryCache.payload);
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-
   try {
-    const upstream = await fetch(upstreamUrl, {
-      method: "GET",
-      redirect: "follow",
-      cache: "no-store",
-      signal: controller.signal,
-      headers: {
-        Accept: "application/json, text/plain;q=0.9, */*;q=0.1",
-        "User-Agent": "NewsBriefingVercel/1.0"
-      }
-    });
+    const upstreamUrl = new URL(urlConfig.value);
+    if (!/^https?:$/.test(upstreamUrl.protocol)) {
+      return res.status(500).json({ error: "뉴스 Apps Script URL 형식이 올바르지 않습니다." });
+    }
+    upstreamUrl.searchParams.set("token", tokenConfig.value);
+    if (forceRefresh) upstreamUrl.searchParams.set("refresh", String(Date.now()));
 
-    const responseText = await upstream.text();
-    let data;
-
-    try {
-      data = JSON.parse(responseText);
-    } catch (_error) {
+    const { response, raw, data } = await fetchJsonWithTimeout(upstreamUrl);
+    if (!data) {
       return res.status(502).json({
-        error: "Apps Script가 JSON이 아닌 응답을 보냈습니다.",
-        upstreamStatus: upstream.status,
-        upstreamContentType: upstream.headers.get("content-type") || "",
-        preview: safePreview(responseText),
-        hint: "웹 앱을 '실행 사용자: 나', '액세스 권한: 모든 사용자'로 새 버전 배포하고 APPS_SCRIPT_URL에 /exec 주소를 입력하세요."
+        error: "뉴스 Apps Script 응답을 JSON으로 해석하지 못했습니다.",
+        preview: raw.slice(0, 240)
       });
     }
 
-    if (!upstream.ok) {
+    if (!response.ok || data.error) {
       return res.status(502).json({
-        error: "Apps Script 호출에 실패했습니다.",
-        upstreamStatus: upstream.status,
+        error: data.error || `뉴스 Apps Script 오류 HTTP ${response.status}`,
         detail: data
       });
     }
 
-    if (data && data.error === "unauthorized") {
-      return res.status(502).json({
-        error: "Apps Script 연결 토큰이 일치하지 않습니다.",
-        hint: "Apps Script의 DASHBOARD_API_TOKEN과 Vercel의 APPS_SCRIPT_TOKEN을 동일하게 설정하세요."
-      });
-    }
-
-    const normalized = normalizePayload(data);
-    return res.status(200).json(normalized);
+    const payload = {
+      updatedAt: String(data.updatedAt || ""),
+      items: Array.isArray(data.items) ? data.items : []
+    };
+    memoryCache = { expiresAt: Date.now() + MEMORY_CACHE_MS, payload };
+    res.setHeader("X-Data-Cache", "upstream");
+    return res.status(200).json(payload);
   } catch (error) {
-    if (error && error.name === "AbortError") {
-      return res.status(504).json({
-        error: "Apps Script 응답 시간이 20초를 초과했습니다."
-      });
-    }
-
-    return res.status(502).json({
-      error: "Apps Script 연결 중 오류가 발생했습니다.",
-      detail: error instanceof Error ? error.message : "unknown error",
-      hint: "APPS_SCRIPT_URL이 /exec로 끝나는지 확인하고 Vercel을 재배포하세요."
+    const timedOut = error?.name === "AbortError";
+    return res.status(timedOut ? 504 : 500).json({
+      error: timedOut ? "뉴스 API 연결 시간이 초과되었습니다." : "뉴스 API 연결 오류",
+      detail: error instanceof Error ? error.message : String(error)
     });
-  } finally {
-    clearTimeout(timer);
   }
 };

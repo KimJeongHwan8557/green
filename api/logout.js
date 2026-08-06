@@ -1,13 +1,15 @@
-const { clearSessionCookie } = require("./_auth");
+"use strict";
 
-module.exports = function handler(req, res) {
-  res.setHeader("Cache-Control", "no-store, max-age=0");
+const { clearSessionCookie, setPrivateNoStore } = require("./_lib/auth");
+
+module.exports = async function handler(req, res) {
+  setPrivateNoStore(res);
 
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
-    return res.status(405).json({ error: "POST 요청만 허용됩니다." });
+    return res.status(405).json({ error: "method_not_allowed" });
   }
 
-  res.setHeader("Set-Cookie", clearSessionCookie());
+  clearSessionCookie(req, res);
   return res.status(200).json({ ok: true });
 };
