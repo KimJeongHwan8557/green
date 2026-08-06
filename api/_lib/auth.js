@@ -201,7 +201,33 @@ function clearSessionCookie(req, res) {
 
 function setPrivateNoStore(res) {
   res.setHeader("Cache-Control", "private, no-store, max-age=0, must-revalidate");
+  res.setHeader("CDN-Cache-Control", "no-store");
+  res.setHeader("Vercel-CDN-Cache-Control", "no-store");
   res.setHeader("Pragma", "no-cache");
+  res.setHeader("Vary", "Cookie");
+}
+
+function setPrivateDataCache(res, options = {}) {
+  const maxAgeSeconds = Number.isFinite(options.maxAgeSeconds)
+    ? Math.max(0, Math.floor(options.maxAgeSeconds))
+    : 300;
+  const staleWhileRevalidateSeconds = Number.isFinite(options.staleWhileRevalidateSeconds)
+    ? Math.max(0, Math.floor(options.staleWhileRevalidateSeconds))
+    : 0;
+
+  const directives = [
+    "private",
+    `max-age=${maxAgeSeconds}`,
+    "must-revalidate"
+  ];
+  if (staleWhileRevalidateSeconds > 0) {
+    directives.push(`stale-while-revalidate=${staleWhileRevalidateSeconds}`);
+  }
+
+  res.setHeader("Cache-Control", directives.join(", "));
+  // 인증 데이터는 공유 CDN에 저장하지 않고, 로그인한 브라우저에서만 짧게 재사용합니다.
+  res.setHeader("CDN-Cache-Control", "no-store");
+  res.setHeader("Vercel-CDN-Cache-Control", "no-store");
   res.setHeader("Vary", "Cookie");
 }
 
@@ -238,6 +264,7 @@ module.exports = {
   getSession,
   getSessionSecret,
   requireAuth,
+  setPrivateDataCache,
   setPrivateNoStore,
   setSessionCookie,
   timingSafeEqualText,

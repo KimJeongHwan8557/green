@@ -434,10 +434,14 @@
       page: 1,
       pageSize: 20
     };
-
-    const AUTH_CHECK_URL = "/api/auth";
-    const SESSION_CACHE_TTL_MS = 60 * 1000;
-
+    const DISPLAY_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+    const BACKGROUND_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+    const CACHE_SCHEMA_VERSION = 3;
+    const CACHE_KEYS = {
+      news: "psobukgu.dashboard.news.v3",
+      leaderSpeech: "psobukgu.dashboard.leader-speeches.v3"
+    };
+    const LEGACY_CACHE_KEYS = ["newsCache", "leaderSpeechCache"];
 
     const elements = {
       authOverlay: document.getElementById("authOverlay"),
@@ -612,52 +616,117 @@
       }
     }
 
-    function clearSessionCaches() {
+    function cacheStorageGet(key) {
       try {
-        sessionStorage.removeItem("newsCache");
-        sessionStorage.removeItem("leaderSpeechCache");
+        const value = localStorage.getItem(key);
+        if (value !== null) return value;
       } catch (_error) {}
+      try {
+        return sessionStorage.getItem(key);
+      } catch (_error) {
+        return null;
+      }
     }
 
-    function readSessionCache(key) {
+    function cacheStorageSet(key, value) {
       try {
-        const cached = JSON.parse(sessionStorage.getItem(key) || "null");
-        if (!cached || !Array.isArray(cached.items)) return null;
-        if (Date.now() - Number(cached.savedAt || 0) >= SESSION_CACHE_TTL_MS) {
-          sessionStorage.removeItem(key);
+        localStorage.setItem(key, value);
+        try { sessionStorage.removeItem(key); } catch (_error) {}
+        return true;
+      } catch (_error) {
+        try {
+          sessionStorage.setItem(key, value);
+          return true;
+        } catch (__error) {
+          return false;
+        }
+      }
+    }
+
+    function removeCacheKey(key) {
+      try { localStorage.removeItem(key); } catch (_error) {}
+      try { sessionStorage.removeItem(key); } catch (_error) {}
+    }
+
+    function clearDashboardCaches() {
+      [CACHE_KEYS.news, CACHE_KEYS.leaderSpeech, ...LEGACY_CACHE_KEYS].forEach(removeCacheKey);
+      if (window.caches && typeof window.caches.keys === "function") {
+        window.caches.keys()
+          .then((keys) => Promise.all(keys.map((key) => window.caches.delete(key))))
+          .catch(() => {});
+      }
+    }
+
+    function normalizeCachedPayload(rawValue) {
+      if (!rawValue) return null;
+      const cached = JSON.parse(rawValue);
+      if (!cached || !Array.isArray(cached.items)) return null;
+
+      const savedAt = Number(cached.savedAt || 0);
+      if (!Number.isFinite(savedAt) || savedAt <= 0) return null;
+      return {
+        schemaVersion: Number(cached.schemaVersion || 1),
+        savedAt,
+        checkedAt: Number(cached.checkedAt || cached.savedAt || 0),
+        updatedAt: String(cached.updatedAt || ""),
+        items: cached.items
+      };
+    }
+
+    function readDisplayCache(key, legacyKey) {
+      try {
+        let cached = normalizeCachedPayload(cacheStorageGet(key));
+        if (!cached && legacyKey) {
+          cached = normalizeCachedPayload(cacheStorageGet(legacyKey));
+          if (cached) {
+            cacheStorageSet(key, JSON.stringify({
+              ...cached,
+              schemaVersion: CACHE_SCHEMA_VERSION
+            }));
+            removeCacheKey(legacyKey);
+          }
+        }
+
+        if (!cached) return null;
+        if (Date.now() - cached.savedAt >= DISPLAY_CACHE_TTL_MS) {
+          removeCacheKey(key);
           return null;
         }
         return cached;
       } catch (_error) {
-        try { sessionStorage.removeItem(key); } catch (__error) {}
+        removeCacheKey(key);
+        if (legacyKey) removeCacheKey(legacyKey);
         return null;
       }
     }
 
-    function writeSessionCache(key, data, items) {
-      try {
-        sessionStorage.setItem(key, JSON.stringify({
-          savedAt: Date.now(),
-          updatedAt: data?.updatedAt || "",
-          items
-        }));
-      } catch (_error) {}
+    function writeDisplayCache(key, data, items) {
+      const now = Date.now();
+      cacheStorageSet(key, JSON.stringify({
+        schemaVersion: CACHE_SCHEMA_VERSION,
+        savedAt: now,
+        checkedAt: now,
+        updatedAt: String(data?.updatedAt || ""),
+        items
+      }));
     }
 
-    async function checkAuthenticatedSession() {
+    function backgroundCheckDue(cached) {
+      const lastCheckedAt = Number(cached?.checkedAt || cached?.savedAt || 0);
+      return !lastCheckedAt || Date.now() - lastCheckedAt >= BACKGROUND_CHECK_INTERVAL_MS;
+    }
+
+    function sameServerVersion(cached, _data, items) {
+      if (!cached) return false;
       try {
-        const response = await fetch(AUTH_CHECK_URL, {
-          method: "GET",
-          credentials: "same-origin",
-          cache: "no-store",
-          headers: { Accept: "application/json" }
-        });
-        if (response.status === 401) return false;
-        if (response.ok) return true;
-        return null;
+        return JSON.stringify(cached.items) === JSON.stringify(items);
       } catch (_error) {
-        return null;
+        return cached.items.length === items.length;
       }
+    }
+
+    function fiveMinuteBucket() {
+      return Math.floor(Date.now() / BACKGROUND_CHECK_INTERVAL_MS);
     }
 
 
@@ -841,83 +910,122 @@
       renderCards();
     }
 
-    async function loadSpeeches(forceRefresh = false) {
+    async function loadSpeeches(forceRefresh = false, backgroundOnly = false) {
+      if (backgroundOnly && elements.refreshButton.disabled) return;
       elements.refreshButton.disabled = true;
+      let cachedDataVisible = false;
+      let cached = null;
 
       if (!forceRefresh) {
-        const cached = readSessionCache("leaderSpeechCache");
+        cached = readDisplayCache(CACHE_KEYS.leaderSpeech, "leaderSpeechCache");
         if (cached) {
-          const authenticated = await checkAuthenticatedSession();
-          if (authenticated === false) {
-            clearSessionCaches();
-            state.items = [];
-            state.filtered = [];
-            showLogin();
-            elements.refreshButton.disabled = false;
-            return;
-          }
-          if (authenticated === true) {
+          cachedDataVisible = true;
+          if (!backgroundOnly) {
             showAuthenticated();
             state.items = cached.items;
             populateFilters();
             populateDateFilter();
-            elements.updated.textContent = cached.updatedAt
-              ? `마지막 데이터 확인 ${cached.updatedAt}`
-              : `데이터 ${state.items.length}건 확인`;
             applyFilters();
+          }
+
+          if (!backgroundCheckDue(cached)) {
+            if (!backgroundOnly) {
+              elements.updated.textContent = cached.updatedAt
+                ? `저장된 데이터 즉시 표시 · 최근 확인 ${cached.updatedAt}`
+                : `저장된 데이터 ${cached.items.length}건 즉시 표시`;
+            }
             elements.refreshButton.disabled = false;
             return;
           }
+
+          elements.updated.textContent = cached.updatedAt
+            ? `저장된 데이터 즉시 표시 · 백그라운드 최신 확인 중 (${cached.updatedAt})`
+            : `저장된 데이터 ${cached.items.length}건 즉시 표시 · 백그라운드 최신 확인 중`;
+        } else if (!backgroundOnly) {
+          elements.updated.textContent = "데이터 확인 중";
+          showStatus("데이터를 불러오는 중입니다.");
         }
+      } else {
+        elements.updated.textContent = "최신 데이터를 강제로 확인 중";
+        showStatus("최신 데이터를 불러오는 중입니다.");
       }
 
-      elements.updated.textContent = "데이터 확인 중";
-      showStatus("데이터를 불러오는 중입니다.");
-
       try {
-        const endpoint = forceRefresh ? "/api/leader-speeches?refresh=1" : "/api/leader-speeches";
+        const endpoint = forceRefresh
+          ? `/api/leader-speeches?refresh=1&_=${Date.now()}`
+          : (cachedDataVisible
+            ? `/api/leader-speeches?revalidate=1&bucket=${fiveMinuteBucket()}`
+            : "/api/leader-speeches");
         const response = await fetch(endpoint, {
           method: "GET",
           credentials: "same-origin",
-          cache: "no-store",
+          cache: forceRefresh ? "no-store" : "default",
           headers: { Accept: "application/json" }
         });
         const { data, raw } = await readJson(response);
 
         if (response.status === 401) {
-          clearSessionCaches();
+          clearDashboardCaches();
           state.items = [];
           state.filtered = [];
           showLogin();
           return;
         }
+
         if (!data) {
+          if (cachedDataVisible) {
+            elements.updated.textContent = "저장된 데이터 표시 중 · 최신 응답 해석 실패";
+            return;
+          }
           showAuthenticated();
-          showStatus("서버 응답을 해석하지 못했습니다.", `HTTP ${response.status}\n${String(raw || "").slice(0, 240)}`, true);
+          showStatus(
+            "서버 응답을 해석하지 못했습니다.",
+            `HTTP ${response.status}
+${String(raw || "").slice(0, 240)}`,
+            true
+          );
           return;
         }
+
         if (!response.ok || data.error) {
-          showAuthenticated();
           const detail = [
             data.hint || "",
             data.missing ? `누락 환경변수: ${data.missing.join(", ")}` : "",
             data.preview ? `상위 응답: ${data.preview}` : "",
             data.detail ? `상세: ${typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)}` : ""
           ].filter(Boolean).join("\n");
+
+          if (cachedDataVisible) {
+            elements.updated.textContent = "저장된 데이터 표시 중 · 백그라운드 최신 확인 실패";
+            console.error(data.error || `서버 오류 HTTP ${response.status}`, detail);
+            return;
+          }
+          showAuthenticated();
           showStatus(data.error || `서버 오류가 발생했습니다. HTTP ${response.status}`, detail, true);
           return;
         }
 
         showAuthenticated();
-        state.items = Array.isArray(data.items) ? data.items : [];
-        writeSessionCache("leaderSpeechCache", data, state.items);
-        populateFilters();
-        populateDateFilter();
+        const nextItems = Array.isArray(data.items) ? data.items : [];
+        const unchanged = sameServerVersion(cached, data, nextItems);
+        writeDisplayCache(CACHE_KEYS.leaderSpeech, data, nextItems);
+
+        if (!unchanged || forceRefresh || !cachedDataVisible) {
+          state.items = nextItems;
+          populateFilters();
+          populateDateFilter();
+          applyFilters();
+        }
+
         elements.updated.textContent = data.updatedAt
           ? `마지막 데이터 확인 ${data.updatedAt}`
-          : `데이터 ${state.items.length}건 확인`;
-        applyFilters();
+          : `데이터 ${nextItems.length}건 확인`;
       } catch (error) {
+        if (cachedDataVisible) {
+          elements.updated.textContent = "저장된 데이터 표시 중 · 백그라운드 최신 확인 실패";
+          console.error(error);
+          return;
+        }
         showAuthenticated();
         showStatus("주요 발언 API에 연결하지 못했습니다.", error instanceof Error ? error.message : "unknown error", true);
       } finally {
@@ -934,6 +1042,7 @@
         const response = await fetch("/api/login", {
           method: "POST",
           credentials: "same-origin",
+          cache: "no-store",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
           body: JSON.stringify({ password: elements.password.value })
         });
@@ -943,7 +1052,7 @@
           return;
         }
         elements.password.value = "";
-        clearSessionCaches();
+        clearDashboardCaches();
         elements.authLoading.hidden = false;
         elements.authLogin.hidden = true;
         await loadSpeeches(true);
@@ -956,9 +1065,9 @@
 
     elements.logoutButton.addEventListener("click", async () => {
       try {
-        await fetch("/api/logout", { method: "POST", credentials: "same-origin" });
+        await fetch("/api/logout", { method: "POST", credentials: "same-origin", cache: "no-store" });
       } finally {
-        clearSessionCaches();
+        clearDashboardCaches();
         state.items = [];
         state.filtered = [];
         showLogin();
@@ -978,6 +1087,16 @@
     elements.refreshButton.addEventListener("click", () => loadSpeeches(true));
     [elements.searchInput, elements.speakerFilter, elements.departmentFilter, elements.modelFilter, elements.dateFilter, elements.sortSelect]
       .forEach((element) => element.addEventListener(element.tagName === "INPUT" ? "input" : "change", applyFilters));
+
+    window.setInterval(() => {
+      if (!document.hidden) loadSpeeches(false, true);
+    }, BACKGROUND_CHECK_INTERVAL_MS);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) loadSpeeches(false, true);
+    });
+    window.addEventListener("storage", (event) => {
+      if (event.key === CACHE_KEYS.leaderSpeech && !document.hidden) loadSpeeches(false, true);
+    });
 
     loadSpeeches();
   </script>

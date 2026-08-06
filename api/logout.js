@@ -11,5 +11,6 @@ module.exports = async function handler(req, res) {
   }
 
   clearSessionCookie(req, res);
+  res.setHeader("Clear-Site-Data", "\"cache\"");
   return res.status(200).json({ ok: true });
 };
