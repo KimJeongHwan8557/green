@@ -490,26 +490,35 @@
       return "";
     }
 
-    function spreadsheetItems(value) {
+    function spreadsheetItems(value, options = {}) {
       const text = String(value || "").replace(/\r/g, "").trim();
       if (!text) return [];
-      return text
-        .split(/\n+/)
+
+      let parts = text.split(/\n+|\s*;\s*/);
+      const middleDotCount = (text.match(/·/g) || []).length;
+      if (parts.length === 1 && options.splitMiddleDots && middleDotCount >= 2) {
+        parts = text.split(/\s*·\s*/);
+      }
+      if (options.splitCommas) {
+        parts = parts.flatMap((part) => part.split(/\s*,\s*/));
+      }
+
+      return [...new Set(parts
         .map((line) => line
           .replace(/^\s*[-•·▪▶]+\s*/, "")
           .replace(/^\s*\d+[.)]\s*/, "")
           .trim())
-        .filter(Boolean);
+        .filter(Boolean))];
     }
 
     function renderSpreadsheetList(value, emptyText) {
-      const items = spreadsheetItems(value);
+      const items = spreadsheetItems(value, { splitMiddleDots: true });
       if (!items.length) return `<p class="empty-text">${escapeHtml(emptyText)}</p>`;
       return `<ul class="compact-list">${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`;
     }
 
     function renderSpreadsheetKeywords(value) {
-      const items = spreadsheetItems(value);
+      const items = spreadsheetItems(value, { splitMiddleDots: true, splitCommas: true });
       if (!items.length) return '<p class="empty-text">등록된 활용 키워드가 없습니다.</p>';
       return `<div class="keyword-list">${items.map((item) => `<span class="keyword-chip">${escapeHtml(item)}</span>`).join("")}</div>`;
     }
@@ -731,20 +740,20 @@
             ${item.eventName ? `<p class="speaker-note">회의·행사: ${escapeHtml(item.eventName)}</p>` : ""}
             <div class="summary-grid">
               <section class="summary-box">
-                <div class="section-title">핵심 발언</div>
-                ${renderSpreadsheetList(item.summary, "핵심 발언 요약이 없습니다.")}
+                <div class="section-title">주요 발언 요약</div>
+                ${renderSpreadsheetList(item.summary, "주요 발언 요약이 없습니다.")}
               </section>
               <section class="summary-box">
-                <div class="section-title">정책 방향·지시사항</div>
-                ${renderSpreadsheetList(item.direction, "별도 정책 방향이나 지시사항이 없습니다.")}
+                <div class="section-title">북구 적용</div>
+                ${renderSpreadsheetList(item.direction, "등록된 북구 적용 내용이 없습니다.")}
               </section>
             </div>
             <section class="section compact">
-              <div class="section-title">주요 쟁점</div>
+              <div class="section-title">쟁점</div>
               ${renderSpreadsheetList(item.issue, "등록된 쟁점이 없습니다.")}
             </section>
             <section class="section compact">
-              <div class="section-title">북구 대응·활용 키워드</div>
+              <div class="section-title">활용 가능 주요 키워드</div>
               ${renderSpreadsheetKeywords(item.keywords)}
             </section>
             ${links.length ? `<div class="links">${links.join("")}</div>` : ""}
