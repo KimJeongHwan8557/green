@@ -365,7 +365,7 @@
     </div>
   </div>
 
-  <main class="shell">
+  <main id="appShell" class="shell" hidden>
     <nav class="top-nav" aria-label="브리핑 메뉴">
       <a class="nav-link" href="/">뉴스</a>
       <a class="nav-link active" href="/leader_speech.html" aria-current="page">주요 발언</a>
@@ -439,6 +439,7 @@
       authOverlay: document.getElementById("authOverlay"),
       authLoading: document.getElementById("authLoading"),
       authLogin: document.getElementById("authLogin"),
+      appShell: document.getElementById("appShell"),
       loginForm: document.getElementById("loginForm"),
       password: document.getElementById("password"),
       loginError: document.getElementById("loginError"),
@@ -602,6 +603,7 @@
       elements.authLoading.hidden = true;
       elements.authLogin.hidden = false;
       elements.authOverlay.hidden = false;
+      elements.appShell.hidden = true;
       elements.sortSelect.hidden = true;
       elements.refreshButton.hidden = true;
       elements.logoutButton.hidden = true;
@@ -611,6 +613,7 @@
 
     function showAuthenticated() {
       elements.authOverlay.hidden = true;
+      elements.appShell.hidden = false;
       elements.sortSelect.hidden = false;
       elements.refreshButton.hidden = false;
       elements.logoutButton.hidden = false;
