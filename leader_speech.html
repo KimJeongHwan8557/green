@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>뉴스 브리핑</title>
+  <title>주요 발언</title>
   <style>
     :root {
       color-scheme: dark;
@@ -340,6 +340,10 @@
       .summary-grid { grid-template-columns: 1fr; }
       .summary-box, .section.compact { padding: 14px; }
     }
+  
+    .badge.speaker { color: var(--green); }
+    .badge.speech-type { background: rgba(131, 178, 255, .12); color: #b9d3ff; }
+    .speaker-note { color: #aab8ca; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -347,10 +351,10 @@
     <div class="auth-box">
       <div id="authLoading">
         <h2>데이터 확인 중<span class="loading-dot"></span></h2>
-        <p>인증 상태와 뉴스 API 연결을 확인하고 있습니다.</p>
+        <p>인증 상태와 주요 발언 API 연결을 확인하고 있습니다.</p>
       </div>
       <div id="authLogin" hidden>
-        <h2>뉴스 브리핑</h2>
+        <h2>정책 브리핑</h2>
         <p>입장코드를 입력하세요.</p>
         <form id="loginForm" class="auth-form">
           <input id="password" class="control" type="password" autocomplete="current-password" placeholder="비밀번호" required>
@@ -363,14 +367,14 @@
 
   <main class="shell">
     <nav class="top-nav" aria-label="브리핑 메뉴">
-      <a class="nav-link active" href="/" aria-current="page">뉴스</a>
-      <a class="nav-link" href="/leader_speech.html">주요 발언</a>
+      <a class="nav-link" href="/">뉴스</a>
+      <a class="nav-link active" href="/leader_speech.html" aria-current="page">주요 발언</a>
     </nav>
 
     <header class="header">
       <div>
-        <h1>뉴스 브리핑</h1>
-        <p class="lead">전국의 정책 사례를 전남광주통합특별시의 권역별 사업과 의정활동으로 연결합니다.</p>
+        <h1>주요 발언</h1>
+        <p class="lead">대통령·국무총리·부처 장관의 국무회의, 업무보고, 정책 현장 발언을 정리합니다.</p>
         <div id="updated" class="updated">데이터 확인 중</div>
       </div>
       <div class="header-actions">
@@ -385,21 +389,13 @@
       </div>
     </header>
 
-    <section class="toolbar" aria-label="뉴스 필터">
-      <input id="searchInput" class="control search" type="search" placeholder="정책, 연계방안, 권역, 부서, 쟁점 검색">
-      <select id="areaFilter" class="control" aria-label="지역">
-        <option value="">지역</option>
-        <option value="national">전국</option>
-        <option value="gwangju-jeonnam">광주·전남</option>
-        <option value="capital">수도권</option>
-        <option value="gangwon">강원권</option>
-        <option value="chungcheong">충청권</option>
-        <option value="yeongnam">영남권</option>
-        <option value="jeju">제주권</option>
-        <option value="other">기타·미분류</option>
+    <section class="toolbar" aria-label="주요 발언 필터">
+      <input id="searchInput" class="control search" type="search" placeholder="발언자, 정책, 지시사항, 쟁점, 키워드 검색">
+      <select id="speakerFilter" class="control" aria-label="발언자">
+        <option value="">발언자</option>
       </select>
-      <select id="departmentFilter" class="control" aria-label="부서">
-        <option value="">부서</option>
+      <select id="speechTypeFilter" class="control" aria-label="발언 유형">
+        <option value="">발언 유형</option>
       </select>
       <select id="modelFilter" class="control" aria-label="AI 모델">
         <option value="">AI 모델</option>
@@ -413,7 +409,7 @@
     </section>
 
     <section class="metrics" aria-label="요약 지표">
-      <article class="metric"><span class="metric-label">전체 정책 사례</span><strong id="metricTotal" class="metric-value">0</strong></article>
+      <article class="metric"><span class="metric-label">전체 주요 발언</span><strong id="metricTotal" class="metric-value">0</strong></article>
       <article class="metric"><span class="metric-label">오늘 수집</span><strong id="metricToday" class="metric-value">0</strong></article>
       <article class="metric"><span class="metric-label">중요도 70+</span><strong id="metricImportant" class="metric-value">0</strong></article>
       <article class="metric"><span class="metric-label">현재 표시</span><strong id="metricShown" class="metric-value">0</strong></article>
@@ -449,11 +445,11 @@
       logoutButton: document.getElementById("logoutButton"),
       updated: document.getElementById("updated"),
       searchInput: document.getElementById("searchInput"),
+      speakerFilter: document.getElementById("speakerFilter"),
+      speechTypeFilter: document.getElementById("speechTypeFilter"),
       modelFilter: document.getElementById("modelFilter"),
       dateFilter: document.getElementById("dateFilter"),
       sortSelect: document.getElementById("sortSelect"),
-      areaFilter: document.getElementById("areaFilter"),
-      departmentFilter: document.getElementById("departmentFilter"),
       refreshButton: document.getElementById("refreshButton"),
       metricTotal: document.getElementById("metricTotal"),
       metricToday: document.getElementById("metricToday"),
@@ -489,31 +485,9 @@
       return "";
     }
 
-    function splitSummary(value) {
-      const text = String(value || "").replace(/\r/g, "").trim();
-      if (!text) return { news: "", application: "" };
-
-      const newsMarker = /\s*\[(?:뉴스|정책) 요약\]\s*/i;
-      const applicationMarker = /\s*\[전남광주통합특별시 적용\]\s*/i;
-      const applicationMatch = applicationMarker.exec(text);
-
-      if (!applicationMatch) {
-        return {
-          news: text.replace(newsMarker, "").trim(),
-          application: ""
-        };
-      }
-
-      return {
-        news: text.slice(0, applicationMatch.index).replace(newsMarker, "").trim(),
-        application: text.slice(applicationMatch.index + applicationMatch[0].length).trim()
-      };
-    }
-
     function spreadsheetItems(value) {
       const text = String(value || "").replace(/\r/g, "").trim();
       if (!text) return [];
-
       return text
         .split(/\n+/)
         .map((line) => line
@@ -531,58 +505,13 @@
 
     function renderSpreadsheetKeywords(value) {
       const items = spreadsheetItems(value);
-      if (!items.length) return '<p class="empty-text">등록된 주요 키워드가 없습니다.</p>';
+      if (!items.length) return '<p class="empty-text">등록된 활용 키워드가 없습니다.</p>';
       return `<div class="keyword-list">${items.map((item) => `<span class="keyword-chip">${escapeHtml(item)}</span>`).join("")}</div>`;
-    }
-
-    function totalPages() {
-      return Math.max(1, Math.ceil(state.filtered.length / state.pageSize));
-    }
-
-    function pageItems() {
-      const pages = totalPages();
-      state.page = Math.min(Math.max(1, state.page), pages);
-      const start = (state.page - 1) * state.pageSize;
-      return state.filtered.slice(start, start + state.pageSize);
-    }
-
-    function paginationPages(current, total) {
-      const pages = new Set([1, total]);
-      for (let page = current - 2; page <= current + 2; page += 1) {
-        if (page >= 1 && page <= total) pages.add(page);
-      }
-      return [...pages].sort((a, b) => a - b);
-    }
-
-    function renderPagination() {
-      const total = totalPages();
-      if (!state.filtered.length || total <= 1) {
-        elements.pagination.hidden = true;
-        elements.pagination.innerHTML = "";
-        return;
-      }
-
-      const pages = paginationPages(state.page, total);
-      const parts = [
-        `<button class="page-button" type="button" data-page="${state.page - 1}" ${state.page === 1 ? "disabled" : ""}>이전</button>`
-      ];
-
-      let previous = 0;
-      pages.forEach((page) => {
-        if (previous && page - previous > 1) parts.push('<span class="page-ellipsis">…</span>');
-        parts.push(`<button class="page-button${page === state.page ? " active" : ""}" type="button" data-page="${page}" ${page === state.page ? 'aria-current="page"' : ""}>${page}</button>`);
-        previous = page;
-      });
-
-      parts.push(`<button class="page-button" type="button" data-page="${state.page + 1}" ${state.page === total ? "disabled" : ""}>다음</button>`);
-      elements.pagination.innerHTML = parts.join("");
-      elements.pagination.hidden = false;
     }
 
     function parseDate(value) {
       const source = String(value || "").trim();
       if (!source) return null;
-
       const normalized = source
         .replace(/\./g, "-")
         .replace(/\s+/g, " ")
@@ -612,24 +541,52 @@
       return item.analysisModel || (modelType(item) === "gpt" ? "GPT" : modelType(item) === "gemini" ? "Gemini" : "모델 미확인");
     }
 
-    function areaGroup(value) {
-      const area = String(value || "").replace(/\s+/g, "").toLowerCase();
-      if (!area) return "other";
+    function speakerLabel(item) {
+      const speaker = String(item.speaker || "").trim();
+      const position = String(item.position || "").trim();
+      if (speaker && position && !speaker.includes(position)) return `${speaker} ${position}`;
+      return speaker || position || "발언자 미확인";
+    }
 
-      const includesAny = (keywords) => keywords.some((keyword) => area.includes(keyword));
+    function totalPages() {
+      return Math.max(1, Math.ceil(state.filtered.length / state.pageSize));
+    }
 
-      if (includesAny(["전국", "중앙정부", "국가", "대한민국"])) return "national";
-      if (includesAny([
-        "광주", "전남", "전라남도", "목포", "여수", "순천", "나주", "광양",
-        "담양", "곡성", "구례", "고흥", "보성", "화순", "장흥", "강진",
-        "해남", "영암", "무안", "함평", "영광", "장성", "완도", "진도", "신안"
-      ])) return "gwangju-jeonnam";
-      if (includesAny(["서울", "경기", "인천", "수도권"])) return "capital";
-      if (includesAny(["강원", "춘천", "원주", "강릉", "동해", "태백", "속초", "삼척"])) return "gangwon";
-      if (includesAny(["대전", "세종", "충북", "충청북도", "충남", "충청남도", "충청권"])) return "chungcheong";
-      if (includesAny(["부산", "대구", "울산", "경북", "경상북도", "경남", "경상남도", "영남"])) return "yeongnam";
-      if (includesAny(["제주"])) return "jeju";
-      return "other";
+    function pageItems() {
+      const pages = totalPages();
+      state.page = Math.min(Math.max(1, state.page), pages);
+      const start = (state.page - 1) * state.pageSize;
+      return state.filtered.slice(start, start + state.pageSize);
+    }
+
+    function paginationPages(current, total) {
+      const pages = new Set([1, total]);
+      for (let page = current - 2; page <= current + 2; page += 1) {
+        if (page >= 1 && page <= total) pages.add(page);
+      }
+      return [...pages].sort((a, b) => a - b);
+    }
+
+    function renderPagination() {
+      const total = totalPages();
+      if (!state.filtered.length || total <= 1) {
+        elements.pagination.hidden = true;
+        elements.pagination.innerHTML = "";
+        return;
+      }
+      const pages = paginationPages(state.page, total);
+      const parts = [
+        `<button class="page-button" type="button" data-page="${state.page - 1}" ${state.page === 1 ? "disabled" : ""}>이전</button>`
+      ];
+      let previous = 0;
+      pages.forEach((page) => {
+        if (previous && page - previous > 1) parts.push('<span class="page-ellipsis">…</span>');
+        parts.push(`<button class="page-button${page === state.page ? " active" : ""}" type="button" data-page="${page}" ${page === state.page ? 'aria-current="page"' : ""}>${page}</button>`);
+        previous = page;
+      });
+      parts.push(`<button class="page-button" type="button" data-page="${state.page + 1}" ${state.page === total ? "disabled" : ""}>다음</button>`);
+      elements.pagination.innerHTML = parts.join("");
+      elements.pagination.hidden = false;
     }
 
     async function readJson(response) {
@@ -681,7 +638,7 @@
     function renderCards() {
       if (!state.filtered.length) {
         updateMetrics(0);
-        showStatus("조건에 맞는 뉴스가 없습니다.");
+        showStatus("조건에 맞는 주요 발언이 없습니다.");
         return;
       }
 
@@ -696,44 +653,43 @@
         const titleHtml = articleLink
           ? `<a href="${escapeHtml(articleLink)}" target="_blank" rel="noopener noreferrer">${title}</a>`
           : title;
-        const summaryParts = splitSummary(item.summary);
         const links = [];
         if (validUrl(item.link)) {
           links.push(`<a class="text-link" href="${escapeHtml(item.link)}" target="_blank" rel="noopener noreferrer">원문 열기</a>`);
-          if (validUrl(item.googleNewsLink)) {
-            links.push(`<a class="text-link" href="${escapeHtml(item.googleNewsLink)}" target="_blank" rel="noopener noreferrer">Google 뉴스 열기</a>`);
-          }
-        } else if (validUrl(item.googleNewsLink)) {
-          links.push(`<a class="text-link" href="${escapeHtml(item.googleNewsLink)}" target="_blank" rel="noopener noreferrer">Google 뉴스에서 열기</a>`);
+        }
+        if (validUrl(item.googleNewsLink) && item.googleNewsLink !== item.link) {
+          links.push(`<a class="text-link" href="${escapeHtml(item.googleNewsLink)}" target="_blank" rel="noopener noreferrer">Google 뉴스 열기</a>`);
         }
 
         return `
           <article class="card">
             <div class="card-top">
-              <span class="badge category">${escapeHtml(item.category || "기타")}</span>
-              ${item.relatedArea ? `<span class="badge area">${escapeHtml(item.relatedArea)}</span>` : ""}
+              <span class="badge category">${escapeHtml(item.category || "정책 일반")}</span>
+              <span class="badge speaker">${escapeHtml(speakerLabel(item))}</span>
+              <span class="badge speech-type">${escapeHtml(item.speechType || "발언 유형 미분류")}</span>
               <span class="badge ${type === "other" ? "unknown" : type}">${escapeHtml(modelLabel(item))}</span>
               <span class="badge score">중요도 ${Number(item.importance || 0)}</span>
             </div>
             <h3 class="article-title">${titleHtml}</h3>
-            <p class="article-meta">${escapeHtml(item.source || "언론사 미확인")} · 발행 ${escapeHtml(item.publishedAt || "미확인")} · 수집 ${escapeHtml(item.collectedAt || "미확인")} · ${escapeHtml(item.department || "소관부서 미분류")}</p>
+            <p class="article-meta">${escapeHtml(item.source || "출처 미확인")} · 발행 ${escapeHtml(item.publishedAt || "미확인")} · 수집 ${escapeHtml(item.collectedAt || "미확인")}</p>
+            ${item.eventName ? `<p class="speaker-note">회의·행사: ${escapeHtml(item.eventName)}</p>` : ""}
             <div class="summary-grid">
               <section class="summary-box">
-                <div class="section-title">뉴스 요약</div>
-                ${renderSpreadsheetList(summaryParts.news, "뉴스 요약이 없습니다.")}
+                <div class="section-title">핵심 발언</div>
+                ${renderSpreadsheetList(item.summary, "핵심 발언 요약이 없습니다.")}
               </section>
               <section class="summary-box">
-                <div class="section-title">통합특별시 적용</div>
-                ${renderSpreadsheetList(summaryParts.application, "별도 적용안이 없습니다.")}
+                <div class="section-title">정책 방향·지시사항</div>
+                ${renderSpreadsheetList(item.direction, "별도 정책 방향이나 지시사항이 없습니다.")}
               </section>
             </div>
             <section class="section compact">
-              <div class="section-title">쟁점</div>
+              <div class="section-title">주요 쟁점</div>
               ${renderSpreadsheetList(item.issue, "등록된 쟁점이 없습니다.")}
             </section>
             <section class="section compact">
-              <div class="section-title">활용 가능 주요 키워드</div>
-              ${renderSpreadsheetKeywords(item.questions)}
+              <div class="section-title">북구 대응·활용 키워드</div>
+              ${renderSpreadsheetKeywords(item.keywords)}
             </section>
             ${links.length ? `<div class="links">${links.join("")}</div>` : ""}
             <div class="basis">${escapeHtml(item.analysisBasis || "분석기준 미확인")}</div>
@@ -743,27 +699,23 @@
       renderPagination();
     }
 
-    function departmentNames(value) {
-      return String(value || "")
-        .split(/[·,\/|;]+/)
-        .map((name) => name.trim())
-        .filter(Boolean);
-    }
+    function populateFilters() {
+      const speakerCurrent = elements.speakerFilter.value;
+      const typeCurrent = elements.speechTypeFilter.value;
+      const speakers = [...new Set(state.items.map(speakerLabel).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
+      const speechTypes = [...new Set(state.items.map((item) => String(item.speechType || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
 
-    function populateDepartmentFilter() {
-      const current = elements.departmentFilter.value;
-      const names = [...new Set(
-        state.items.flatMap((item) => departmentNames(item.department))
-      )].sort((a, b) => a.localeCompare(b, "ko"));
-
-      elements.departmentFilter.innerHTML = [
-        '<option value="">부서</option>',
-        ...names.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+      elements.speakerFilter.innerHTML = [
+        '<option value="">발언자</option>',
+        ...speakers.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`)
+      ].join("");
+      elements.speechTypeFilter.innerHTML = [
+        '<option value="">발언 유형</option>',
+        ...speechTypes.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`)
       ].join("");
 
-      if (names.includes(current)) {
-        elements.departmentFilter.value = current;
-      }
+      if (speakers.includes(speakerCurrent)) elements.speakerFilter.value = speakerCurrent;
+      if (speechTypes.includes(typeCurrent)) elements.speechTypeFilter.value = typeCurrent;
     }
 
     function populateDateFilter() {
@@ -786,21 +738,21 @@
 
     function applyFilters() {
       const query = elements.searchInput.value.trim().toLowerCase();
+      const selectedSpeaker = elements.speakerFilter.value;
+      const selectedSpeechType = elements.speechTypeFilter.value;
       const selectedModel = elements.modelFilter.value;
       const selectedDate = elements.dateFilter.value;
-      const selectedArea = elements.areaFilter.value;
-      const selectedDepartment = elements.departmentFilter.value;
       const sort = elements.sortSelect.value;
 
       state.filtered = state.items.filter((item) => {
         const haystack = [
-          item.title, item.summary, item.issue, item.questions, item.category,
-          item.relatedArea, item.department, item.source
+          item.title, item.speaker, item.position, item.speechType, item.eventName,
+          item.category, item.summary, item.direction, item.issue, item.keywords, item.source
         ].join(" ").toLowerCase();
         if (query && !haystack.includes(query)) return false;
+        if (selectedSpeaker && speakerLabel(item) !== selectedSpeaker) return false;
+        if (selectedSpeechType && String(item.speechType || "") !== selectedSpeechType) return false;
         if (selectedModel && modelType(item) !== selectedModel) return false;
-        if (selectedArea && areaGroup(item.relatedArea) !== selectedArea) return false;
-        if (selectedDepartment && !departmentNames(item.department).includes(selectedDepartment)) return false;
 
         if (selectedDate) {
           const date = parseDate(item.publishedAt || item.collectedAt);
@@ -814,7 +766,6 @@
         const publishedB = parseDate(b.publishedAt)?.getTime() || 0;
         const collectedA = parseDate(a.collectedAt)?.getTime() || 0;
         const collectedB = parseDate(b.collectedAt)?.getTime() || 0;
-
         if (sort === "published-asc") return publishedA - publishedB;
         if (sort === "importance-desc") return Number(b.importance || 0) - Number(a.importance || 0);
         if (sort === "collected-desc") return collectedB - collectedA;
@@ -825,13 +776,13 @@
       renderCards();
     }
 
-    async function loadNews() {
+    async function loadSpeeches() {
       elements.refreshButton.disabled = true;
       elements.updated.textContent = "데이터 확인 중";
       showStatus("데이터를 불러오는 중입니다.");
 
       try {
-        const response = await fetch("/api/news", {
+        const response = await fetch("/api/leader-speeches", {
           method: "GET",
           credentials: "same-origin",
           cache: "no-store",
@@ -843,17 +794,11 @@
           showLogin();
           return;
         }
-
         if (!data) {
           showAuthenticated();
-          showStatus(
-            "서버 응답을 해석하지 못했습니다.",
-            `HTTP ${response.status}\n${String(raw || "").slice(0, 240)}`,
-            true
-          );
+          showStatus("서버 응답을 해석하지 못했습니다.", `HTTP ${response.status}\n${String(raw || "").slice(0, 240)}`, true);
           return;
         }
-
         if (!response.ok || data.error) {
           showAuthenticated();
           const detail = [
@@ -868,7 +813,7 @@
 
         showAuthenticated();
         state.items = Array.isArray(data.items) ? data.items : [];
-        populateDepartmentFilter();
+        populateFilters();
         populateDateFilter();
         elements.updated.textContent = data.updatedAt
           ? `마지막 데이터 확인 ${data.updatedAt}`
@@ -876,7 +821,7 @@
         applyFilters();
       } catch (error) {
         showAuthenticated();
-        showStatus("뉴스 API에 연결하지 못했습니다.", error instanceof Error ? error.message : "unknown error", true);
+        showStatus("주요 발언 API에 연결하지 못했습니다.", error instanceof Error ? error.message : "unknown error", true);
       } finally {
         elements.refreshButton.disabled = false;
       }
@@ -887,7 +832,6 @@
       elements.loginError.textContent = "";
       const submitButton = elements.loginForm.querySelector("button[type=submit]");
       submitButton.disabled = true;
-
       try {
         const response = await fetch("/api/login", {
           method: "POST",
@@ -896,16 +840,14 @@
           body: JSON.stringify({ password: elements.password.value })
         });
         const { data } = await readJson(response);
-
         if (!response.ok || !data || !data.ok) {
           elements.loginError.textContent = data?.error || "로그인 요청을 처리하지 못했습니다.";
           return;
         }
-
         elements.password.value = "";
         elements.authLoading.hidden = false;
         elements.authLogin.hidden = true;
-        await loadNews();
+        await loadSpeeches();
       } catch (error) {
         elements.loginError.textContent = error instanceof Error ? error.message : "로그인 연결 오류";
       } finally {
@@ -926,20 +868,18 @@
     elements.pagination.addEventListener("click", (event) => {
       const button = event.target.closest("button[data-page]");
       if (!button || button.disabled) return;
-
       const requestedPage = Number(button.dataset.page);
       if (!Number.isFinite(requestedPage)) return;
-
       state.page = Math.min(Math.max(1, requestedPage), totalPages());
       renderCards();
       document.querySelector(".result-head")?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
 
-    elements.refreshButton.addEventListener("click", loadNews);
-    [elements.searchInput, elements.areaFilter, elements.departmentFilter, elements.modelFilter, elements.dateFilter, elements.sortSelect]
+    elements.refreshButton.addEventListener("click", loadSpeeches);
+    [elements.searchInput, elements.speakerFilter, elements.speechTypeFilter, elements.modelFilter, elements.dateFilter, elements.sortSelect]
       .forEach((element) => element.addEventListener(element.tagName === "INPUT" ? "input" : "change", applyFilters));
 
-    loadNews();
+    loadSpeeches();
   </script>
 </body>
 </html>
