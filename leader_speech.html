@@ -394,8 +394,8 @@
       <select id="speakerFilter" class="control" aria-label="발언자">
         <option value="">발언자</option>
       </select>
-      <select id="speechTypeFilter" class="control" aria-label="발언 유형">
-        <option value="">발언 유형</option>
+      <select id="departmentFilter" class="control" aria-label="담당 부서">
+        <option value="">담당 부서</option>
       </select>
       <select id="modelFilter" class="control" aria-label="AI 모델">
         <option value="">AI 모델</option>
@@ -447,7 +447,7 @@
       updated: document.getElementById("updated"),
       searchInput: document.getElementById("searchInput"),
       speakerFilter: document.getElementById("speakerFilter"),
-      speechTypeFilter: document.getElementById("speechTypeFilter"),
+      departmentFilter: document.getElementById("departmentFilter"),
       modelFilter: document.getElementById("modelFilter"),
       dateFilter: document.getElementById("dateFilter"),
       sortSelect: document.getElementById("sortSelect"),
@@ -669,7 +669,7 @@
             <div class="card-top">
               <span class="badge category">${escapeHtml(item.category || "정책 일반")}</span>
               <span class="badge speaker">${escapeHtml(speakerLabel(item))}</span>
-              <span class="badge speech-type">${escapeHtml(item.speechType || "발언 유형 미분류")}</span>
+              <span class="badge speech-type">${escapeHtml(item.department || "담당부서 미분류")}</span>
               <span class="badge ${type === "other" ? "unknown" : type}">${escapeHtml(modelLabel(item))}</span>
               <span class="badge score">중요도 ${Number(item.importance || 0)}</span>
             </div>
@@ -704,21 +704,21 @@
 
     function populateFilters() {
       const speakerCurrent = elements.speakerFilter.value;
-      const typeCurrent = elements.speechTypeFilter.value;
+      const departmentCurrent = elements.departmentFilter.value;
       const speakers = [...new Set(state.items.map(speakerLabel).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
-      const speechTypes = [...new Set(state.items.map((item) => String(item.speechType || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
+      const departments = [...new Set(state.items.map((item) => String(item.department || "").trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, "ko"));
 
       elements.speakerFilter.innerHTML = [
         '<option value="">발언자</option>',
         ...speakers.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`)
       ].join("");
-      elements.speechTypeFilter.innerHTML = [
-        '<option value="">발언 유형</option>',
-        ...speechTypes.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`)
+      elements.departmentFilter.innerHTML = [
+        '<option value="">담당 부서</option>',
+        ...departments.map((value) => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`)
       ].join("");
 
       if (speakers.includes(speakerCurrent)) elements.speakerFilter.value = speakerCurrent;
-      if (speechTypes.includes(typeCurrent)) elements.speechTypeFilter.value = typeCurrent;
+      if (departments.includes(departmentCurrent)) elements.departmentFilter.value = departmentCurrent;
     }
 
     function populateDateFilter() {
@@ -742,19 +742,19 @@
     function applyFilters() {
       const query = elements.searchInput.value.trim().toLowerCase();
       const selectedSpeaker = elements.speakerFilter.value;
-      const selectedSpeechType = elements.speechTypeFilter.value;
+      const selectedDepartment = elements.departmentFilter.value;
       const selectedModel = elements.modelFilter.value;
       const selectedDate = elements.dateFilter.value;
       const sort = elements.sortSelect.value;
 
       state.filtered = state.items.filter((item) => {
         const haystack = [
-          item.title, item.speaker, item.position, item.speechType, item.eventName,
+          item.title, item.speaker, item.position, item.department, item.speechType, item.eventName,
           item.category, item.summary, item.direction, item.issue, item.keywords, item.source
         ].join(" ").toLowerCase();
         if (query && !haystack.includes(query)) return false;
         if (selectedSpeaker && speakerLabel(item) !== selectedSpeaker) return false;
-        if (selectedSpeechType && String(item.speechType || "") !== selectedSpeechType) return false;
+        if (selectedDepartment && String(item.department || "") !== selectedDepartment) return false;
         if (selectedModel && modelType(item) !== selectedModel) return false;
 
         if (selectedDate) {
@@ -879,7 +879,7 @@
     });
 
     elements.refreshButton.addEventListener("click", loadSpeeches);
-    [elements.searchInput, elements.speakerFilter, elements.speechTypeFilter, elements.modelFilter, elements.dateFilter, elements.sortSelect]
+    [elements.searchInput, elements.speakerFilter, elements.departmentFilter, elements.modelFilter, elements.dateFilter, elements.sortSelect]
       .forEach((element) => element.addEventListener(element.tagName === "INPUT" ? "input" : "change", applyFilters));
 
     loadSpeeches();
