@@ -52,20 +52,13 @@ module.exports = async function handler(req, res) {
     if (authResponse.status === 401) {
       return res.status(401).json({ error: "unauthorized" });
     }
-    const authRaw = await authResponse.text();
     if (!authResponse.ok) {
-      const preview = authRaw.slice(0, 240);
+      const preview = (await authResponse.text()).slice(0, 240);
       return res.status(502).json({
         error: "기존 로그인 세션 확인에 실패했습니다.",
         hint: "기존 /api/news가 정상 동작하는지 먼저 확인하세요.",
         preview
       });
-    }
-
-    let authData = null;
-    try { authData = JSON.parse(authRaw); } catch (_error) {}
-    if (authData && (authData.error === "unauthorized" || authData.authenticated === false)) {
-      return res.status(401).json({ error: "unauthorized" });
     }
 
     const upstreamUrl = new URL(appsScriptUrl);
