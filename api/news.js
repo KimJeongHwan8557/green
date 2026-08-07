@@ -39,11 +39,6 @@ function forceRefreshRequested(req) {
   return value === "1" || value === "true" || value === "yes";
 }
 
-function backgroundRevalidationRequested(req) {
-  const value = req?.query?.revalidate;
-  return value === "1" || value === "true" || value === "yes";
-}
-
 function sendNoStore(res, status, payload) {
   setPrivateNoStore(res);
   return res.status(status).json(payload);
@@ -59,7 +54,7 @@ function sendSuccess(res, payload, cacheLabel) {
   return res.status(200).json(payload);
 }
 
-async function fetchJsonWithTimeout(url, timeoutMs = 20000) {
+async function fetchJsonWithTimeout(url, timeoutMs = 15000) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -83,23 +78,18 @@ async function fetchJsonWithTimeout(url, timeoutMs = 20000) {
   }
 }
 
-function buildUpstreamUrl(urlValue, tokenValue, forceRefresh) {
+function buildUpstreamUrl(urlValue, tokenValue) {
   const upstreamUrl = new URL(urlValue);
   if (!/^https?:$/.test(upstreamUrl.protocol)) {
     throw new Error("invalid_apps_script_url");
   }
+  const nonce = String(Date.now());
   upstreamUrl.searchParams.set("token", tokenValue);
-  if (forceRefresh) {
-    const nonce = String(Date.now());
-    upstreamUrl.searchParams.set("refresh", nonce);
-    upstreamUrl.searchParams.set("_", nonce);
-  }
+  // Vercel 메모리 캐시가 없을 때는 Apps Script CacheService를 우회해
+  // 현재 배포된 웹앱이 실제 시트를 한 번만 읽도록 합니다.
+  upstreamUrl.searchParams.set("refresh", nonce);
+  upstreamUrl.searchParams.set("_", nonce);
   return upstreamUrl;
-}
-
-async function requestUpstream(urlValue, tokenValue, forceRefresh) {
-  const upstreamUrl = buildUpstreamUrl(urlValue, tokenValue, forceRefresh);
-  return fetchJsonWithTimeout(upstreamUrl);
 }
 
 function normalizePayload(data) {
@@ -122,10 +112,11 @@ module.exports = async function handler(req, res) {
   const urlConfig = firstConfiguredEnv(URL_ENV_NAMES);
   const tokenConfig = firstConfiguredEnv(TOKEN_ENV_NAMES);
   const missing = [];
-  if (!urlConfig.value) missing.push("뉴스 Apps Script URL (NEWS_APPS_SCRIPT_URL 또는 NEWS_APPS_SCRIPT_WEB_APP_URL 또는 APPS_SCRIPT_URL)");
-  if (!tokenConfig.value) missing.push("뉴스 API 토큰 (NEWS_DASHBOARD_API_TOKEN 또는 NEWS_API_TOKEN 또는 DASHBOARD_API_TOKEN)");
+  if (!urlConfig.value) missing.push("뉴스 Apps Script URL");
+  if (!tokenConfig.value) missing.push("뉴스 API 토큰");
 
   if (missing.length) {
+    console.error("[api/news] missing environment", { missing });
     return sendNoStore(res, 500, {
       error: "뉴스 API 환경변수가 없습니다.",
       missing
@@ -133,55 +124,68 @@ module.exports = async function handler(req, res) {
   }
 
   const forceRefresh = forceRefreshRequested(req);
-  const backgroundRevalidation = backgroundRevalidationRequested(req);
   const cachedItems = Array.isArray(memoryCache.payload?.items) ? memoryCache.payload.items : [];
   if (!forceRefresh && cachedItems.length > 0 && memoryCache.expiresAt > Date.now()) {
+    console.log("[api/news] memory hit", { itemCount: cachedItems.length });
     return sendSuccess(res, memoryCache.payload, "memory-hit");
   }
 
+  const startedAt = Date.now();
   try {
-    let upstream = await requestUpstream(urlConfig.value, tokenConfig.value, forceRefresh);
+    const upstreamUrl = buildUpstreamUrl(urlConfig.value, tokenConfig.value);
+    const upstream = await fetchJsonWithTimeout(upstreamUrl);
+    const elapsedMs = Date.now() - startedAt;
 
     if (!upstream.data) {
+      console.error("[api/news] upstream invalid json", {
+        status: upstream.response.status,
+        elapsedMs,
+        preview: upstream.raw.slice(0, 120)
+      });
       return sendNoStore(res, 502, {
-        error: "뉴스 Apps Script 응답을 JSON으로 해석하지 못했습니다.",
-        preview: upstream.raw.slice(0, 240)
+        error: "뉴스 Apps Script 응답을 JSON으로 해석하지 못했습니다."
       });
     }
 
     if (!upstream.response.ok || upstream.data.error) {
+      console.error("[api/news] upstream error", {
+        status: upstream.response.status,
+        elapsedMs,
+        upstreamError: upstream.data.error || ""
+      });
       return sendNoStore(res, 502, {
-        error: upstream.data.error || `뉴스 Apps Script 오류 HTTP ${upstream.response.status}`,
-        detail: upstream.data
+        error: upstream.data.error || `뉴스 Apps Script 오류 HTTP ${upstream.response.status}`
       });
     }
 
-    let payload = normalizePayload(upstream.data);
-    let cacheLabel = forceRefresh ? "forced-upstream" : (backgroundRevalidation ? "background-upstream" : "upstream");
+    const payload = normalizePayload(upstream.data);
+    console.log("[api/news] upstream success", {
+      elapsedMs,
+      itemCount: payload.items.length,
+      schemaVersion: payload.schemaVersion,
+      updatedAt: payload.updatedAt
+    });
 
-    // 시트 구조 변경 직후 Apps Script CacheService가 빈 배열을 돌려주는 경우가 있어
-    // 일반 조회가 0건이면 한 번 강제 새로고침하여 실제 시트를 다시 읽습니다.
-    if (!forceRefresh && payload.items.length === 0) {
-      const retry = await requestUpstream(urlConfig.value, tokenConfig.value, true);
-      if (retry.data && retry.response.ok && !retry.data.error) {
-        const retryPayload = normalizePayload(retry.data);
-        if (retryPayload.items.length > 0) {
-          payload = retryPayload;
-          cacheLabel = "empty-retry-recovered";
-        }
-      }
-    }
-
-    // 빈 응답은 서버 메모리 캐시를 오염시키지 않습니다.
-    if (payload.items.length > 0) {
-      memoryCache = { expiresAt: Date.now() + MEMORY_CACHE_MS, payload };
-    } else {
+    // News_db에는 데이터가 존재하는 운영 시스템이므로 0건은 정상 상태로 캐시하지 않습니다.
+    // 가장 흔한 원인은 Apps Script 코드를 저장만 하고 버전형 웹앱 배포를 갱신하지 않은 경우입니다.
+    if (payload.items.length === 0) {
       memoryCache = { expiresAt: 0, payload: null };
+      console.error("[api/news] upstream returned zero items; check Apps Script web app deployment version");
+      return sendNoStore(res, 502, {
+        error: "Apps Script 뉴스 응답이 0건입니다. Apps Script의 배포 > 배포 관리에서 웹앱을 최신 코드 버전으로 갱신해 주세요."
+      });
     }
 
-    return sendSuccess(res, payload, cacheLabel);
+    memoryCache = { expiresAt: Date.now() + MEMORY_CACHE_MS, payload };
+    return sendSuccess(res, payload, forceRefresh ? "forced-upstream" : "upstream-fresh");
   } catch (error) {
+    const elapsedMs = Date.now() - startedAt;
     const timedOut = error?.name === "AbortError";
+    console.error("[api/news] request failed", {
+      elapsedMs,
+      name: error?.name || "",
+      message: error instanceof Error ? error.message : String(error)
+    });
     if (error?.message === "invalid_apps_script_url") {
       return sendNoStore(res, 500, { error: "뉴스 Apps Script URL 형식이 올바르지 않습니다." });
     }
