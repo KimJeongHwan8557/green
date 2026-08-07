@@ -2,13 +2,7 @@
 
 const crypto = require("crypto");
 
-const URL_ENV_NAMES = [
-  "NEWS_APPS_SCRIPT_URL",
-  "NEWS_APPS_SCRIPT_WEB_APP_URL",
-  "APPS_SCRIPT_WEB_APP_URL",
-  "APPS_SCRIPT_URL",
-  "GOOGLE_APPS_SCRIPT_URL"
-];
+const CURRENT_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw_5tUCTfFRgrHPl1GUf7smUziDumQx4bxx2AACa8SLiXFDiv4_scC0A5lfSq6X9ACweA/exec";
 const TOKEN_ENV_NAMES = [
   "NEWS_DASHBOARD_API_TOKEN",
   "NEWS_API_TOKEN",
@@ -26,14 +20,13 @@ function first(names) {
 
 module.exports = async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
-  const urlConfig = first(URL_ENV_NAMES);
   const tokenConfig = first(TOKEN_ENV_NAMES);
-  if (!urlConfig.value || !tokenConfig.value) {
+  if (!tokenConfig.value) {
     return res.status(500).json({ ok: false, missingConfig: true });
   }
 
   try {
-    const upstreamUrl = new URL(urlConfig.value);
+    const upstreamUrl = new URL(CURRENT_APPS_SCRIPT_URL);
     const match = upstreamUrl.pathname.match(/\/macros\/s\/([^/]+)\/exec$/);
     const deploymentId = match ? match[1] : "";
     const nonce = String(Date.now());
@@ -55,8 +48,7 @@ module.exports = async function handler(req, res) {
     const debug = data && typeof data.debug === "object" ? data.debug : null;
     return res.status(200).json({
       ok: true,
-      configuredEnvName: urlConfig.name,
-      urlFingerprint: crypto.createHash("sha256").update(urlConfig.value).digest("hex").slice(0, 12),
+      urlFingerprint: crypto.createHash("sha256").update(CURRENT_APPS_SCRIPT_URL).digest("hex").slice(0, 12),
       deploymentIdPrefix: deploymentId ? deploymentId.slice(0, 14) : "",
       deploymentIdSuffix: deploymentId ? deploymentId.slice(-14) : "",
       upstreamStatus: response.status,
