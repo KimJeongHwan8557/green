@@ -6,13 +6,10 @@ const {
   setPrivateNoStore
 } = require("./_lib/auth");
 
-const URL_ENV_NAMES = [
-  "NEWS_APPS_SCRIPT_URL",
-  "NEWS_APPS_SCRIPT_WEB_APP_URL",
-  "APPS_SCRIPT_WEB_APP_URL",
-  "APPS_SCRIPT_URL",
-  "GOOGLE_APPS_SCRIPT_URL"
-];
+// 2026-08-07 새로 생성한 Apps Script v4.5 웹앱 배포.
+// 기존 Vercel APPS_SCRIPT_URL이 오래된 배포를 가리키는 문제를 우회하기 위해
+// 서버 코드에서 현재 정상 배포 URL을 우선 사용합니다. API 토큰은 계속 Vercel 비밀변수를 사용합니다.
+const CURRENT_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw_5tUCTfFRgrHPl1GUf7smUziDumQx4bxx2AACa8SLiXFDiv4_scC0A5lfSq6X9ACweA/exec";
 
 const TOKEN_ENV_NAMES = [
   "NEWS_DASHBOARD_API_TOKEN",
@@ -85,8 +82,6 @@ function buildUpstreamUrl(urlValue, tokenValue) {
   }
   const nonce = String(Date.now());
   upstreamUrl.searchParams.set("token", tokenValue);
-  // Vercel 메모리 캐시가 없을 때는 Apps Script CacheService를 우회해
-  // 현재 배포된 웹앱이 실제 시트를 한 번만 읽도록 합니다.
   upstreamUrl.searchParams.set("refresh", nonce);
   upstreamUrl.searchParams.set("_", nonce);
   return upstreamUrl;
@@ -95,6 +90,7 @@ function buildUpstreamUrl(urlValue, tokenValue) {
 function normalizePayload(data) {
   return {
     schemaVersion: 4,
+    apiVersion: String(data?.apiVersion || ""),
     updatedAt: String(data?.updatedAt || ""),
     items: Array.isArray(data?.items) ? data.items : []
   };
@@ -109,17 +105,11 @@ module.exports = async function handler(req, res) {
   const session = requireAuth(req, res);
   if (!session) return;
 
-  const urlConfig = firstConfiguredEnv(URL_ENV_NAMES);
   const tokenConfig = firstConfiguredEnv(TOKEN_ENV_NAMES);
-  const missing = [];
-  if (!urlConfig.value) missing.push("뉴스 Apps Script URL");
-  if (!tokenConfig.value) missing.push("뉴스 API 토큰");
-
-  if (missing.length) {
-    console.error("[api/news] missing environment", { missing });
+  if (!tokenConfig.value) {
+    console.error("[api/news] missing token environment");
     return sendNoStore(res, 500, {
-      error: "뉴스 API 환경변수가 없습니다.",
-      missing
+      error: "뉴스 API 토큰 환경변수가 없습니다."
     });
   }
 
@@ -132,7 +122,7 @@ module.exports = async function handler(req, res) {
 
   const startedAt = Date.now();
   try {
-    const upstreamUrl = buildUpstreamUrl(urlConfig.value, tokenConfig.value);
+    const upstreamUrl = buildUpstreamUrl(CURRENT_APPS_SCRIPT_URL, tokenConfig.value);
     const upstream = await fetchJsonWithTimeout(upstreamUrl);
     const elapsedMs = Date.now() - startedAt;
 
@@ -162,17 +152,19 @@ module.exports = async function handler(req, res) {
     console.log("[api/news] upstream success", {
       elapsedMs,
       itemCount: payload.items.length,
-      schemaVersion: payload.schemaVersion,
+      apiVersion: payload.apiVersion,
       updatedAt: payload.updatedAt
     });
 
-    // News_db에는 데이터가 존재하는 운영 시스템이므로 0건은 정상 상태로 캐시하지 않습니다.
-    // 가장 흔한 원인은 Apps Script 코드를 저장만 하고 버전형 웹앱 배포를 갱신하지 않은 경우입니다.
     if (payload.items.length === 0) {
       memoryCache = { expiresAt: 0, payload: null };
-      console.error("[api/news] upstream returned zero items; check Apps Script web app deployment version");
+      console.error("[api/news] upstream returned zero items", {
+        apiVersion: payload.apiVersion,
+        updatedAt: payload.updatedAt
+      });
       return sendNoStore(res, 502, {
-        error: "Apps Script 뉴스 응답이 0건입니다. Apps Script의 배포 > 배포 관리에서 웹앱을 최신 코드 버전으로 갱신해 주세요."
+        error: "Apps Script 뉴스 응답이 0건입니다.",
+        apiVersion: payload.apiVersion || "unknown"
       });
     }
 
