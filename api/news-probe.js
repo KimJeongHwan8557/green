@@ -39,6 +39,7 @@ module.exports = async function handler(req, res) {
     const nonce = String(Date.now());
     upstreamUrl.searchParams.set("token", tokenConfig.value);
     upstreamUrl.searchParams.set("refresh", nonce);
+    upstreamUrl.searchParams.set("debug", "1");
     upstreamUrl.searchParams.set("_", nonce);
 
     const startedAt = Date.now();
@@ -51,6 +52,7 @@ module.exports = async function handler(req, res) {
     let data = null;
     try { data = JSON.parse(text); } catch (_error) {}
 
+    const debug = data && typeof data.debug === "object" ? data.debug : null;
     return res.status(200).json({
       ok: true,
       configuredEnvName: urlConfig.name,
@@ -59,8 +61,27 @@ module.exports = async function handler(req, res) {
       deploymentIdSuffix: deploymentId ? deploymentId.slice(-14) : "",
       upstreamStatus: response.status,
       elapsedMs: Date.now() - startedAt,
+      apiVersion: String(data?.apiVersion || ""),
       updatedAt: String(data?.updatedAt || ""),
       itemCount: Array.isArray(data?.items) ? data.items.length : null,
+      debug: debug ? {
+        spreadsheetIdSuffix: String(debug.spreadsheetIdSuffix || ""),
+        spreadsheetName: String(debug.spreadsheetName || ""),
+        sheetName: String(debug.sheetName || ""),
+        sheetId: debug.sheetId ?? null,
+        lastRow: debug.lastRow ?? null,
+        lastColumn: debug.lastColumn ?? null,
+        dataRangeRows: debug.dataRangeRows ?? null,
+        dataRangeColumns: debug.dataRangeColumns ?? null,
+        headerA: String(debug.headerA || ""),
+        headerD: String(debug.headerD || ""),
+        headerQ: String(debug.headerQ || ""),
+        nonEmptyRowCount: debug.nonEmptyRowCount ?? null,
+        titleRowCount: debug.titleRowCount ?? null,
+        itemCount: debug.itemCount ?? null,
+        firstTitle: String(debug.firstTitle || "").slice(0, 80),
+        lastTitle: String(debug.lastTitle || "").slice(0, 80)
+      } : null,
       upstreamKeys: data && typeof data === "object" ? Object.keys(data).sort() : [],
       upstreamError: String(data?.error || "")
     });
